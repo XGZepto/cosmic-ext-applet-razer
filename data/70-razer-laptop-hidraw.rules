@@ -1,0 +1,3 @@
+# Let the logged-in user talk to Razer laptop control interfaces (hidraw),
+# the same access Chrome's WebHID needs for rzrctrl.com.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", TAG+="uaccess"
