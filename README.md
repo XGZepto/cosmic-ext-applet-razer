@@ -12,8 +12,9 @@ It talks to the laptop exactly the way the web app does (HID feature reports ove
 - Keyboard lighting: Off / Static / Spectrum / Wave / Reactive / Starlight, colour swatches, speed, wave direction
 - Logo light on/off, Static/Breathing
 - Battery charge limit (50–80 %)
+- Device info: model, part number, BIOS and EC firmware versions
 
-Sections your model doesn't support are hidden automatically.
+Sections collapse to a one-line summary, and sections your model doesn't support are hidden automatically.
 
 ## Install (Pop!_OS 24.04 / COSMIC)
 

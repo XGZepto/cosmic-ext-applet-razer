@@ -1,6 +1,7 @@
 name := 'cosmic-ext-applet-razer'
 appid := 'dev.razerctl.CosmicAppletRazer'
 prefix := '/usr/local'
+icondir := prefix / 'share/icons/hicolor/scalable/apps'
 
 default: build
 
@@ -14,6 +15,7 @@ test:
 install: build
     sudo install -Dm0755 target/release/{{name}} {{prefix}}/bin/{{name}}
     sudo install -Dm0644 data/{{appid}}.desktop {{prefix}}/share/applications/{{appid}}.desktop
+    sudo install -Dm0644 data/icons/{{appid}}-symbolic.svg {{icondir}}/{{appid}}-symbolic.svg
     @echo "Done. Add it in Settings → Desktop → Panel → Configure panel applets."
 
 # Give your user access to the laptop's HID control device (only needed once)
@@ -24,7 +26,7 @@ install-udev:
     @echo "udev rule installed."
 
 uninstall:
-    sudo rm -f {{prefix}}/bin/{{name}} {{prefix}}/share/applications/{{appid}}.desktop
+    sudo rm -f {{prefix}}/bin/{{name}} {{prefix}}/share/applications/{{appid}}.desktop {{icondir}}/{{appid}}-symbolic.svg
 
 # Run from the terminal with logs (useful for debugging)
 run: build

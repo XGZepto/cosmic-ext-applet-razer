@@ -27,6 +27,7 @@ const STATUS_OK: u8 = 0x02;
 const STATUS_FAIL: u8 = 0x03;
 const STATUS_UNSUPPORTED: u8 = 0x05;
 
+const CLASS_DEVICE: u8 = 0x00;
 const CLASS_LIGHTING: u8 = 0x03;
 const CLASS_BATTERY: u8 = 0x07;
 const CLASS_PERFORMANCE: u8 = 0x0d;
@@ -172,9 +173,52 @@ impl Default for Keyboard {
     }
 }
 
+/// Static facts about the laptop, read once when the device is opened.
+#[derive(Clone, Debug, Default)]
+pub struct DeviceInfo {
+    /// Marketing name from DMI, e.g. "Razer Blade 14".
+    pub model: Option<String>,
+    /// Razer part number from DMI, e.g. "RZ09-0370BEA3".
+    pub sku: Option<String>,
+    pub bios: Option<String>,
+    /// Embedded controller firmware (major, minor).
+    pub firmware: Option<(u8, u8)>,
+    pub pid: u16,
+    pub path: PathBuf,
+}
+
+impl DeviceInfo {
+    fn read_dmi(&mut self) {
+        let dmi = |f: &str| {
+            std::fs::read_to_string(Path::new("/sys/class/dmi/id").join(f))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        if !dmi("sys_vendor").is_some_and(|v| v.starts_with("Razer")) {
+            return;
+        }
+        // product_name looks like "Blade 14 - RZ09-0370"
+        if let Some(name) = dmi("product_name") {
+            let (model, code) = match name.split_once(" - ") {
+                Some((m, c)) => (m.trim().to_string(), Some(c.trim().to_string())),
+                None => (name, None),
+            };
+            self.model = Some(if model.starts_with("Razer") {
+                model
+            } else {
+                format!("Razer {model}")
+            });
+            self.sku = dmi("product_sku").or(code);
+        }
+        self.bios = dmi("bios_version");
+    }
+}
+
 /// Everything the applet shows. `None` = the laptop didn't answer that query.
 #[derive(Clone, Debug, Default)]
 pub struct State {
+    pub info: DeviceInfo,
     pub power_mode: Option<u8>,
     pub fan_manual: bool,
     pub fan_rpm: Option<u32>,
@@ -208,16 +252,64 @@ impl std::fmt::Display for OpenError {
     }
 }
 
+/// Some laptops read back the wave effect without its direction, so the last
+/// direction set is kept in a file that every applet instance can see.
+fn wave_file() -> Option<PathBuf> {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".local/state")))?;
+    Some(state.join("cosmic-ext-applet-razer/wave-direction"))
+}
+
+fn remembered_wave_right() -> bool {
+    wave_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|s| s.trim() == "right")
+}
+
+fn remember_wave_right(right: bool) {
+    let Some(path) = wave_file() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, if right { "right\n" } else { "left\n" });
+}
+
 pub struct Razer {
     file: File,
-    pub path: PathBuf,
-    pub pid: u16,
+    lock: Option<File>,
+    pub info: DeviceInfo,
+}
+
+/// The panel runs one copy of the applet per monitor, and they all share the
+/// laptop's single request/response slot. Whole exchanges are serialized with
+/// a lock file so one copy can't read another's reply.
+fn open_lock() -> Option<File> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("cosmic-ext-applet-razer.lock"))
+        .ok()
+}
+
+/// USB product ID of a /dev/hidrawN node, if it belongs to a Razer device.
+fn hidraw_pid(path: &Path) -> Option<u16> {
+    let name = path.file_name()?;
+    let uevent = Path::new("/sys/class/hidraw").join(name).join("device/uevent");
+    let (vid, pid) = parse_hid_id(&std::fs::read_to_string(uevent).ok()?)?;
+    (vid == RAZER_VENDOR).then_some(pid)
 }
 
 /// List /dev/hidrawN nodes belonging to supported Razer laptops.
 pub fn candidates() -> Vec<(PathBuf, u16)> {
     if let Ok(p) = std::env::var("RAZER_HIDRAW") {
-        return vec![(PathBuf::from(p), 0)];
+        let path = PathBuf::from(p);
+        let pid = hidraw_pid(&path).unwrap_or(0);
+        return vec![(path, pid)];
     }
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir("/sys/class/hidraw") else {
@@ -254,6 +346,7 @@ impl Razer {
         }
         let mut denied = None;
         let mut fallback = None;
+        let lock = open_lock();
         for (path, pid) in cands {
             let file = match OpenOptions::new().read(true).write(true).open(&path) {
                 Ok(f) => f,
@@ -263,10 +356,12 @@ impl Razer {
                 }
                 Err(_) => continue,
             };
-            let mut dev = Razer { file, path, pid };
+            let info = DeviceInfo { pid, path, ..Default::default() };
+            let lock = lock.as_ref().and_then(|l| l.try_clone().ok());
+            let mut dev = Razer { file, lock, info };
             // Same probe RazerControl uses: ask for the keyboard lighting mode.
             match dev.transact(Packet::new(CLASS_LIGHTING, 0x8a, 0x50)) {
-                Ok(r) if r.status() == STATUS_OK => return Ok(dev),
+                Ok(r) if r.status() == STATUS_OK => return Ok(dev.with_info()),
                 Ok(_) => {
                     fallback.get_or_insert(dev);
                 }
@@ -274,7 +369,7 @@ impl Razer {
             }
         }
         if let Some(dev) = fallback {
-            return Ok(dev);
+            return Ok(dev.with_info());
         }
         match denied {
             Some(p) => Err(OpenError::PermissionDenied(p)),
@@ -282,8 +377,36 @@ impl Razer {
         }
     }
 
+    fn with_info(mut self) -> Self {
+        self.info.read_dmi();
+        self.info.firmware = self.get_firmware().ok();
+        self
+    }
+
     pub fn transact(&mut self, mut pkt: Packet) -> io::Result<Response> {
         pkt.finalize();
+        let lock = self.lock.as_ref().map(|l| l.as_raw_fd());
+        if let Some(fd) = lock {
+            // SAFETY: plain advisory lock on a file we own; released below.
+            unsafe { libc::flock(fd, libc::LOCK_EX) };
+        }
+        // Retry if the reply belongs to some other command, e.g. one sent by a
+        // tool that doesn't take the lock.
+        let mut result = self.exchange(&mut pkt);
+        for _ in 0..2 {
+            match &result {
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => result = self.exchange(&mut pkt),
+                _ => break,
+            }
+        }
+        if let Some(fd) = lock {
+            // SAFETY: as above.
+            unsafe { libc::flock(fd, libc::LOCK_UN) };
+        }
+        result
+    }
+
+    fn exchange(&mut self, pkt: &mut Packet) -> io::Result<Response> {
         let fd = self.file.as_raw_fd();
         // SAFETY: buffer is REPORT_LEN bytes, matching the length encoded in the ioctl.
         let rc = unsafe { libc::ioctl(fd, HIDIOCSFEATURE as _, pkt.0.as_mut_ptr()) };
@@ -291,6 +414,7 @@ impl Razer {
             return Err(io::Error::last_os_error());
         }
         let mut buf = [0u8; REPORT_LEN];
+        let answers = |buf: &[u8; REPORT_LEN]| buf[7..9] == pkt.0[7..9];
         for _ in 0..12 {
             std::thread::sleep(Duration::from_millis(8));
             buf = [0u8; REPORT_LEN];
@@ -299,15 +423,25 @@ impl Razer {
             if rc < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if buf[1] != STATUS_BUSY {
+            if buf[1] != STATUS_BUSY && answers(&buf) {
                 break;
             }
+        }
+        if !answers(&buf) {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "reply was for another command"));
         }
         match buf[1] {
             STATUS_FAIL => Err(io::Error::other("command failed")),
             STATUS_UNSUPPORTED => Err(io::Error::new(io::ErrorKind::Unsupported, "not supported")),
             _ => Ok(Response(buf)),
         }
+    }
+
+    // ---- device -----------------------------------------------------------
+
+    pub fn get_firmware(&mut self) -> io::Result<(u8, u8)> {
+        let r = self.transact(Packet::new(CLASS_DEVICE, 0x81, 0x02))?;
+        Ok((r.arg(0), r.arg(1)))
     }
 
     // ---- performance / fan -------------------------------------------------
@@ -368,7 +502,14 @@ impl Razer {
                 kb.rgb = [r.arg(2), r.arg(3), r.arg(4)];
             }
             KbMode::Static => kb.rgb = [r.arg(1), r.arg(2), r.arg(3)],
-            KbMode::Wave => kb.wave_right = r.arg(1) == 0x02,
+            KbMode::Wave => {
+                kb.wave_right = match r.arg(1) {
+                    0x01 => false,
+                    0x02 => true,
+                    // Not reported (e.g. Blade 14 2021): use the last one we set.
+                    _ => remembered_wave_right(),
+                }
+            }
             _ => {}
         }
         kb.speed = kb.speed.clamp(1, 15);
@@ -387,6 +528,9 @@ impl Razer {
             KbMode::Off | KbMode::Spectrum => p,
         };
         self.transact(p)?;
+        if kb.mode == KbMode::Wave {
+            remember_wave_right(kb.wave_right);
+        }
         Ok(())
     }
 
@@ -429,7 +573,10 @@ impl Razer {
     /// Read everything. Individual failures (e.g. a model with no logo LED)
     /// just leave that field empty; only a dead device is an error.
     pub fn read_state(&mut self) -> io::Result<State> {
-        let mut s = State::default();
+        let mut s = State {
+            info: self.info.clone(),
+            ..Default::default()
+        };
         let (mode, manual) = self.get_power()?;
         s.power_mode = Some(mode);
         s.fan_manual = manual;
