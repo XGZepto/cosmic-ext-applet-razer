@@ -17,8 +17,9 @@ use crate::razer::{
     POWER_CUSTOM, ZONE_CPU, ZONE_GPU,
 };
 
-const APP_ID: &str = "dev.razerctl.CosmicAppletRazer";
-const APP_ICON: &[u8] = include_bytes!("../data/icons/dev.razerctl.CosmicAppletRazer-symbolic.svg");
+const APP_ID: &str = "io.github.xgzepto.cosmic-ext-applet-razer";
+const APP_ICON: &[u8] =
+    include_bytes!("../data/icons/io.github.xgzepto.cosmic-ext-applet-razer-symbolic.svg");
 // Not in every icon theme, so it ships with the applet.
 const PERFORMANCE_ICON: &[u8] = include_bytes!("../data/icons/performance-symbolic.svg");
 
@@ -112,7 +113,9 @@ impl Segments {
     }
 }
 
-fn model<T: Copy + 'static>(items: impl IntoIterator<Item = (&'static str, T)>) -> SingleSelectModel {
+fn model<T: Copy + 'static>(
+    items: impl IntoIterator<Item = (&'static str, T)>,
+) -> SingleSelectModel {
     items
         .into_iter()
         .fold(SingleSelectModel::builder(), |b, (label, v)| {
@@ -208,12 +211,17 @@ fn with_device(dev: Shared, f: impl FnOnce(&mut Razer) -> io::Result<()>) -> Out
         }
     }
     let d = guard.as_mut().unwrap();
-    let warning = f(d).err().map(|e| format!("That setting didn't apply: {e}"));
+    let warning = f(d)
+        .err()
+        .map(|e| format!("That setting didn't apply: {e}"));
     match d.read_state() {
         Ok(s) => (Ok(s), warning),
         Err(e) => {
             *guard = None; // e.g. after suspend; reopen next time
-            (Err(format!("Lost connection to the laptop ({e}). Try again.")), None)
+            (
+                Err(format!("Lost connection to the laptop ({e}). Try again.")),
+                None,
+            )
         }
     }
 }
@@ -241,7 +249,10 @@ impl RazerApplet {
     }
 
     fn keyboard(&self) -> Keyboard {
-        self.state.as_ref().and_then(|s| s.keyboard.clone()).unwrap_or_default()
+        self.state
+            .as_ref()
+            .and_then(|s| s.keyboard.clone())
+            .unwrap_or_default()
     }
 
     fn set_keyboard(&mut self, kb: Keyboard) -> Task<Message> {
@@ -455,7 +466,11 @@ impl RazerApplet {
     ) -> Element<'a, Message> {
         let open = self.expanded == Some(id);
         let body = if open { body() } else { Vec::new() };
-        column(vec![section_header(id, open, icon, title, summary), column(body).into()]).into()
+        column(vec![
+            section_header(id, open, icon, title, summary),
+            column(body).into(),
+        ])
+        .into()
     }
 
     fn performance_body<'a>(&'a self, state: &'a State) -> Vec<Element<'a, Message>> {
@@ -472,7 +487,11 @@ impl RazerApplet {
             };
             body.push(column(levels).into());
         }
-        body.push(toggle_row("Manual fan speed", state.fan_manual, Message::FanManual));
+        body.push(toggle_row(
+            "Manual fan speed",
+            state.fan_manual,
+            Message::FanManual,
+        ));
         let mut fan = Vec::new();
         if state.fan_manual {
             let rpm = self
@@ -599,13 +618,17 @@ impl RazerApplet {
         content.push(column(warning.into_iter().collect()).into());
 
         content.push(sep());
-        content.push(self.section(
-            Section::Performance,
-            widget::icon(embedded_icon(PERFORMANCE_ICON)).size(20).into(),
-            "Performance",
-            performance_summary(state),
-            || self.performance_body(state),
-        ));
+        content.push(
+            self.section(
+                Section::Performance,
+                widget::icon(embedded_icon(PERFORMANCE_ICON))
+                    .size(20)
+                    .into(),
+                "Performance",
+                performance_summary(state),
+                || self.performance_body(state),
+            ),
+        );
 
         if state.keyboard.is_some() || state.logo_on.is_some() {
             content.push(sep());
@@ -646,8 +669,14 @@ impl RazerApplet {
                     ("Model", info.model.clone()),
                     ("Part number", info.sku.clone()),
                     ("BIOS", info.bios.clone()),
-                    ("EC firmware", info.firmware.map(|(a, b)| format!("{a}.{b}"))),
-                    ("USB ID", (info.pid != 0).then(|| format!("1532:{:04x}", info.pid))),
+                    (
+                        "EC firmware",
+                        info.firmware.map(|(a, b)| format!("{a}.{b}")),
+                    ),
+                    (
+                        "USB ID",
+                        (info.pid != 0).then(|| format!("1532:{:04x}", info.pid)),
+                    ),
                     ("Interface", Some(info.path.display().to_string())),
                 ]
                 .into_iter()
@@ -734,7 +763,9 @@ impl cosmic::Application for RazerApplet {
 // ---- summaries shown on collapsed section headers ---------------------------
 
 fn level_name(level: Option<u8>) -> &'static str {
-    level.and_then(|l| LEVELS.get(l as usize).copied()).unwrap_or("?")
+    level
+        .and_then(|l| LEVELS.get(l as usize).copied())
+        .unwrap_or("?")
 }
 
 fn performance_summary(s: &State) -> String {
@@ -807,7 +838,11 @@ fn section_header<'a>(
     title: &'static str,
     summary: String,
 ) -> Element<'a, Message> {
-    let chevron = if open { "go-up-symbolic" } else { "go-down-symbolic" };
+    let chevron = if open {
+        "go-up-symbolic"
+    } else {
+        "go-down-symbolic"
+    };
     menu_button(
         widget::row::with_children(vec![
             icon,

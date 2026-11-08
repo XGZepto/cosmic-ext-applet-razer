@@ -1,5 +1,5 @@
 name := 'cosmic-ext-applet-razer'
-appid := 'dev.razerctl.CosmicAppletRazer'
+appid := 'io.github.xgzepto.' + name
 prefix := '/usr/local'
 icondir := prefix / 'share/icons/hicolor/scalable/apps'
 

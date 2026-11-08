@@ -2,8 +2,14 @@
 name = "cosmic-ext-applet-razer"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.93"
 description = "COSMIC panel applet for Razer laptop settings (performance, fans, lighting, battery limit)"
-license = "MIT"
+license = "GPL-3.0-only"
+repository = "https://github.com/XGZepto/cosmic-ext-applet-razer"
+readme = "README.md"
+keywords = ["cosmic", "applet", "razer", "laptop", "hidraw"]
+categories = ["hardware-support"]
+publish = false
 
 [dependencies]
 libc = "0.2"

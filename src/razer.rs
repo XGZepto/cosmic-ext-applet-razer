@@ -14,9 +14,9 @@ pub const RAZER_VENDOR: u16 = 0x1532;
 
 /// Laptop product IDs accepted by RazerControl (Blade 14/15/16/17, Stealth, Book…).
 pub const LAPTOP_PIDS: &[u16] = &[
-    0x0224, 0x0233, 0x023b, 0x0240, 0x0246, 0x023a, 0x0245, 0x0255, 0x0253, 0x022d, 0x0232,
-    0x0239, 0x024a, 0x0252, 0x0256, 0x0234, 0x022f, 0x0225, 0x0210, 0x020f, 0x026a, 0x026f,
-    0x0270, 0x0276, 0x026d, 0x027a, 0x028a, 0x028b, 0x028c, 0x0259, 0x029f, 0x029d,
+    0x0224, 0x0233, 0x023b, 0x0240, 0x0246, 0x023a, 0x0245, 0x0255, 0x0253, 0x022d, 0x0232, 0x0239,
+    0x024a, 0x0252, 0x0256, 0x0234, 0x022f, 0x0225, 0x0210, 0x020f, 0x026a, 0x026f, 0x0270, 0x0276,
+    0x026d, 0x027a, 0x028a, 0x028b, 0x028c, 0x0259, 0x029f, 0x029d,
 ];
 
 const REPORT_LEN: usize = 91;
@@ -299,7 +299,9 @@ fn open_lock() -> Option<File> {
 /// USB product ID of a /dev/hidrawN node, if it belongs to a Razer device.
 fn hidraw_pid(path: &Path) -> Option<u16> {
     let name = path.file_name()?;
-    let uevent = Path::new("/sys/class/hidraw").join(name).join("device/uevent");
+    let uevent = Path::new("/sys/class/hidraw")
+        .join(name)
+        .join("device/uevent");
     let (vid, pid) = parse_hid_id(&std::fs::read_to_string(uevent).ok()?)?;
     (vid == RAZER_VENDOR).then_some(pid)
 }
@@ -317,8 +319,12 @@ pub fn candidates() -> Vec<(PathBuf, u16)> {
     };
     for e in entries.flatten() {
         let uevent = e.path().join("device/uevent");
-        let Ok(text) = std::fs::read_to_string(&uevent) else { continue };
-        let Some((vid, pid)) = parse_hid_id(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(&uevent) else {
+            continue;
+        };
+        let Some((vid, pid)) = parse_hid_id(&text) else {
+            continue;
+        };
         if vid == RAZER_VENDOR && LAPTOP_PIDS.contains(&pid) {
             out.push((Path::new("/dev").join(e.file_name()), pid));
         }
@@ -356,7 +362,11 @@ impl Razer {
                 }
                 Err(_) => continue,
             };
-            let info = DeviceInfo { pid, path, ..Default::default() };
+            let info = DeviceInfo {
+                pid,
+                path,
+                ..Default::default()
+            };
             let lock = lock.as_ref().and_then(|l| l.try_clone().ok());
             let mut dev = Razer { file, lock, info };
             // Same probe RazerControl uses: ask for the keyboard lighting mode.
@@ -428,7 +438,10 @@ impl Razer {
             }
         }
         if !answers(&buf) {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "reply was for another command"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "reply was for another command",
+            ));
         }
         match buf[1] {
             STATUS_FAIL => Err(io::Error::other("command failed")),
@@ -469,7 +482,11 @@ impl Razer {
     }
 
     pub fn set_level(&mut self, zone: u8, level: u8) -> io::Result<()> {
-        self.transact(Packet::new(CLASS_PERFORMANCE, 0x07, 0x03).arg(1, zone).arg(2, level))?;
+        self.transact(
+            Packet::new(CLASS_PERFORMANCE, 0x07, 0x03)
+                .arg(1, zone)
+                .arg(2, level),
+        )?;
         Ok(())
     }
 
@@ -481,7 +498,11 @@ impl Razer {
     pub fn set_fan_rpm(&mut self, rpm: u32) -> io::Result<()> {
         let v = (rpm.clamp(FAN_RPM_MIN, FAN_RPM_MAX) / 100) as u8;
         for zone in [ZONE_CPU, ZONE_GPU] {
-            self.transact(Packet::new(CLASS_PERFORMANCE, 0x01, 0x03).arg(1, zone).arg(2, v))?;
+            self.transact(
+                Packet::new(CLASS_PERFORMANCE, 0x01, 0x03)
+                    .arg(1, zone)
+                    .arg(2, v),
+            )?;
         }
         Ok(())
     }
@@ -490,8 +511,10 @@ impl Razer {
 
     pub fn get_keyboard(&mut self) -> io::Result<Keyboard> {
         let r = self.transact(Packet::new(CLASS_LIGHTING, 0x8a, 0x50))?;
-        let mut kb = Keyboard::default();
-        kb.mode = KbMode::from_code(r.arg(0)).unwrap_or(KbMode::Spectrum);
+        let mut kb = Keyboard {
+            mode: KbMode::from_code(r.arg(0)).unwrap_or(KbMode::Spectrum),
+            ..Default::default()
+        };
         match kb.mode {
             KbMode::Starlight => {
                 kb.speed = r.arg(2);
@@ -544,14 +567,22 @@ impl Razer {
 
     pub fn set_logo_on(&mut self, on: bool) -> io::Result<()> {
         self.transact(
-            Packet::new(CLASS_LIGHTING, 0x00, 0x03).arg(0, 1).arg(1, 4).arg(2, on as u8),
+            Packet::new(CLASS_LIGHTING, 0x00, 0x03)
+                .arg(0, 1)
+                .arg(1, 4)
+                .arg(2, on as u8),
         )?;
         Ok(())
     }
 
     pub fn set_logo_breathing(&mut self, breathing: bool) -> io::Result<()> {
         let m = if breathing { 0x02 } else { 0x00 };
-        self.transact(Packet::new(CLASS_LIGHTING, 0x02, 0x03).arg(0, 1).arg(1, 4).arg(2, m))?;
+        self.transact(
+            Packet::new(CLASS_LIGHTING, 0x02, 0x03)
+                .arg(0, 1)
+                .arg(1, 4)
+                .arg(2, m),
+        )?;
         Ok(())
     }
 
@@ -610,9 +641,14 @@ mod tests {
     #[test]
     fn packet_layout_matches_razercontrol() {
         // SetCustomPerformancePacket(GPU, High) from RazerControl
-        let mut p = Packet::new(CLASS_PERFORMANCE, 0x07, 0x03).arg(1, ZONE_GPU).arg(2, 2);
+        let mut p = Packet::new(CLASS_PERFORMANCE, 0x07, 0x03)
+            .arg(1, ZONE_GPU)
+            .arg(2, 2);
         p.finalize();
-        assert_eq!(&p.0[..12], &[0x00, 0x00, 0x1f, 0, 0, 0, 0x03, 0x0d, 0x07, 0x00, 0x02, 0x02]);
+        assert_eq!(
+            &p.0[..12],
+            &[0x00, 0x00, 0x1f, 0, 0, 0, 0x03, 0x0d, 0x07, 0x00, 0x02, 0x02]
+        );
         assert_eq!(p.0[89], 0x03 ^ 0x0d ^ 0x07 ^ 0x02 ^ 0x02);
         assert_eq!(p.0[90], 0);
     }
