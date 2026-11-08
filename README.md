@@ -4,6 +4,8 @@ A [COSMIC](https://system76.com/cosmic) panel applet for Razer laptops. It contr
 modes, fan speed, keyboard and logo lighting, and the battery charge limit from the panel, with no
 Synapse, browser, or background daemon.
 
+![The applet's Performance, Lighting and Device sections](docs/screenshot.png)
+
 ## Features
 
 - **Performance:** Balanced or Custom mode, with CPU (Low / Mid / High / Boost) and GPU (Low / Mid / High) levels
